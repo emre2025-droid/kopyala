@@ -1,0 +1,5 @@
+{
+  "name": "olan-1",
+  "description": "Belirtilen bir aracıya bağlanan, bir konudan canlı verileri görüntüleyen ve sorunsuz bir deneyim için mesajları yerel depolamada saklayan gerçek zamanlı bir MQTT istemcisi.",
+  "requestFramePermissions": []
+}
