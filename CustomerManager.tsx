@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DatabaseService } from './lib/supabase';
 import { Customer, Device } from './types';
 
 interface CustomerManagerProps {
@@ -14,23 +15,52 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
 
     const handleAddCustomer = (e: React.FormEvent) => {
         e.preventDefault();
-        if (newCustomerName.trim() && !customers.some(c => c.name === newCustomerName.trim())) {
-            const newCustomer: Customer = { id: `cust_${Date.now()}`, name: newCustomerName.trim() };
-            setCustomers(prev => [...prev, newCustomer]);
-            setNewCustomerName('');
-        }
+        const addCustomer = async () => {
+            if (newCustomerName.trim() && !customers.some(c => c.name === newCustomerName.trim())) {
+                try {
+                    const newCustomer = await DatabaseService.createCustomer(newCustomerName.trim());
+                    setCustomers(prev => [...prev, { id: newCustomer.id, name: newCustomer.name }]);
+                    setNewCustomerName('');
+                } catch (error) {
+                    console.error('Error creating customer:', error);
+                    // Fallback to local state
+                    const newCustomer: Customer = { id: `cust_${Date.now()}`, name: newCustomerName.trim() };
+                    setCustomers(prev => [...prev, newCustomer]);
+                    setNewCustomerName('');
+                }
+            }
+        };
+        addCustomer();
     };
     
-    const handleAssignDevice = (deviceId: string, customerId: string) => {
-        setAssignments(prev => {
-            const newAssignments = { ...prev };
-            if (customerId) {
-                newAssignments[deviceId] = customerId;
-            } else {
-                delete newAssignments[deviceId]; // Unassign
-            }
-            return newAssignments;
-        });
+    const handleAssignDevice = async (deviceId: string, customerId: string) => {
+        try {
+            // Supabase'de güncelle
+            await DatabaseService.updateDeviceCustomer(deviceId, customerId || null);
+            
+            // Local state'i güncelle
+            setAssignments(prev => {
+                const newAssignments = { ...prev };
+                if (customerId) {
+                    newAssignments[deviceId] = customerId;
+                } else {
+                    delete newAssignments[deviceId]; // Unassign
+                }
+                return newAssignments;
+            });
+        } catch (error) {
+            console.error('Error assigning device:', error);
+            // Fallback to local state only
+            setAssignments(prev => {
+                const newAssignments = { ...prev };
+                if (customerId) {
+                    newAssignments[deviceId] = customerId;
+                } else {
+                    delete newAssignments[deviceId]; // Unassign
+                }
+                return newAssignments;
+            });
+        }
     };
 
     const unassignedDevices = allDevices.filter(d => !d.customerId);

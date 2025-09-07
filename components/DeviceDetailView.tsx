@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DatabaseService } from '../lib/supabase';
 import { Device, UserRole } from '../types';
 import MessageList from './MessageList';
 import CommandButton from './CommandButton';
@@ -61,8 +62,21 @@ const DeviceDetailView: React.FC<DeviceDetailViewProps> = ({ device, onSendComma
     };
 
     const handleNameSubmit = () => {
-        onRenameDevice(device.id, currentName.trim());
-        setIsEditingName(false);
+        const updateName = async () => {
+            try {
+                // Supabase'de güncelle
+                await DatabaseService.updateDeviceName(device.id, currentName.trim());
+                // Local state'i güncelle
+                onRenameDevice(device.id, currentName.trim());
+                setIsEditingName(false);
+            } catch (error) {
+                console.error('Error updating device name:', error);
+                // Fallback to local state only
+                onRenameDevice(device.id, currentName.trim());
+                setIsEditingName(false);
+            }
+        };
+        updateName();
     };
     
     const handleNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

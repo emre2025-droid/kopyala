@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import mqtt from 'mqtt';
+import { DatabaseService } from './lib/supabase';
 import { MqttMessage, ConnectionStatusEnum, Device, TelemetryPayload, StatusPayload, UserRole, Customer } from './types';
 import Header from './components/Header';
 import ConnectionStatus from './components/ConnectionStatus';
@@ -108,24 +109,49 @@ const App: React.FC = () => {
     // Effect for fetching initial data from API or localStorage
     useEffect(() => {
         const loadData = async () => {
-            if (API_URL) {
-                try {
-                    const response = await fetch(`${API_URL}/data`);
-                    if (!response.ok) throw new Error('Network response was not ok');
-                    const data = await response.json();
-                    setCustomers(data.customers || []);
-                    setDeviceName(data.deviceNames || {});
-                    setAssignments(data.assignments || {});
-                } catch (error) {
-                    console.error("Failed to fetch data from API:", error);
+            try {
+                // Supabase'den müşterileri yükle
+                const customersData = await DatabaseService.getCustomers();
+                setCustomers(customersData.map(c => ({ id: c.id, name: c.name })));
+
+                // Supabase'den cihazları yükle
+                const devicesData = await DatabaseService.getDevices();
+                const names: Record<string, string> = {};
+                const assignments: Record<string, string> = {};
+                
+                devicesData.forEach(device => {
+                    if (device.display_name) {
+                        names[device.id] = device.display_name;
+                    }
+                    if (device.customer_id) {
+                        assignments[device.id] = device.customer_id;
+                    }
+                });
+                
+                setDeviceName(names);
+                setAssignments(assignments);
+            } catch (error) {
+                console.error("Failed to fetch data from Supabase:", error);
+                // Fallback to localStorage/API
+                if (API_URL) {
+                    try {
+                        const response = await fetch(`${API_URL}/data`);
+                        if (!response.ok) throw new Error('Network response was not ok');
+                        const data = await response.json();
+                        setCustomers(data.customers || []);
+                        setDeviceName(data.deviceNames || {});
+                        setAssignments(data.assignments || {});
+                    } catch (error) {
+                        console.error("Failed to fetch data from API:", error);
+                    }
+                } else {
+                    const storedCustomers = localStorage.getItem('customers');
+                    const storedDeviceNames = localStorage.getItem('deviceDisplayNames');
+                    const storedAssignments = localStorage.getItem('deviceCustomerAssignments');
+                    if (storedCustomers) setCustomers(JSON.parse(storedCustomers));
+                    if (storedDeviceNames) setDeviceName(JSON.parse(storedDeviceNames));
+                    if (storedAssignments) setAssignments(JSON.parse(storedAssignments));
                 }
-            } else {
-                const storedCustomers = localStorage.getItem('customers');
-                const storedDeviceNames = localStorage.getItem('deviceDisplayNames');
-                const storedAssignments = localStorage.getItem('deviceCustomerAssignments');
-                if (storedCustomers) setCustomers(JSON.parse(storedCustomers));
-                if (storedDeviceNames) setDeviceName(JSON.parse(storedDeviceNames));
-                if (storedAssignments) setAssignments(JSON.parse(storedAssignments));
             }
             isInitialLoad.current = false;
         };
@@ -136,25 +162,27 @@ const App: React.FC = () => {
     useEffect(() => {
         if (isInitialLoad.current) return;
 
-        const persistData = async () => {
-            const dataToSave = { customers, deviceNames, assignments };
-            if (API_URL) {
-                try {
+        // Supabase'e veri kaydetme artık gerçek zamanlı olarak yapılıyor
+        // Bu effect sadece fallback için korunuyor
+        const persistDataFallback = async () => {
+            try {
+                const dataToSave = { customers, deviceNames, assignments };
+                if (API_URL) {
                     await fetch(`${API_URL}/data`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(dataToSave),
                     });
-                } catch (error) {
-                    console.error("Failed to persist data to API:", error);
+                } else {
+                    localStorage.setItem('customers', JSON.stringify(customers));
+                    localStorage.setItem('deviceDisplayNames', JSON.stringify(deviceNames));
+                    localStorage.setItem('deviceCustomerAssignments', JSON.stringify(assignments));
                 }
-            } else {
-                localStorage.setItem('customers', JSON.stringify(customers));
-                localStorage.setItem('deviceDisplayNames', JSON.stringify(deviceNames));
-                localStorage.setItem('deviceCustomerAssignments', JSON.stringify(assignments));
+            } catch (error) {
+                console.error("Failed to persist data:", error);
             }
         };
-        persistData();
+        persistDataFallback();
     }, [customers, deviceNames, assignments]);
 
 
@@ -164,6 +192,63 @@ const App: React.FC = () => {
             if (!data.device_id) return;
 
             const deviceId = data.device_id;
+            
+            // Veritabanına kaydet
+            const saveToDatabase = async () => {
+                try {
+                    // Cihazı veritabanında güncelle/oluştur
+                    await DatabaseService.upsertDevice({
+                        id: deviceId,
+                        display_name: deviceNames[deviceId] || null,
+                        customer_id: assignments[deviceId] || null,
+                        is_online: true,
+                        last_seen: new Date().toISOString(),
+                    });
+
+                    // MQTT mesajını kaydet
+                    await DatabaseService.insertMqttMessage({
+                        device_id: deviceId,
+                        topic: msg.topic,
+                        payload: msg.payload,
+                        timestamp: new Date().toISOString(),
+                    });
+
+                    // Telemetri veya durum verisini kaydet
+                    if (msg.topic.endsWith('/tele')) {
+                        const telemetryData = data as TelemetryPayload;
+                        await DatabaseService.insertTelemetryData({
+                            device_id: deviceId,
+                            tds: telemetryData.tds,
+                            temp: telemetryData.temp,
+                            flow_clean: telemetryData.flow_clean,
+                            flow_waste: telemetryData.flow_waste,
+                            total_clean_litres: telemetryData.total_clean_litres,
+                            total_waste_litres: telemetryData.total_waste_litres,
+                            fw: telemetryData.fw,
+                            timestamp: telemetryData.ts || new Date().toISOString(),
+                        });
+                    } else if (msg.topic.endsWith('/stat')) {
+                        const statusData = data as StatusPayload;
+                        await DatabaseService.insertStatusData({
+                            device_id: deviceId,
+                            event: statusData.event,
+                            fw: statusData.fw,
+                            ip: statusData.ip,
+                            rssi: statusData.rssi,
+                            uptime_ms: statusData.uptime_ms,
+                            interval_ms: statusData.interval_ms,
+                            status: statusData.status,
+                            timestamp: statusData.ts || new Date().toISOString(),
+                        });
+                    }
+                } catch (error) {
+                    console.error('Database save error:', error);
+                }
+            };
+
+            // Asenkron olarak veritabanına kaydet
+            saveToDatabase();
+            
             setDevices(prevDevices => {
                 const newDevices = new Map(prevDevices);
                 const existingDevice = newDevices.get(deviceId);
