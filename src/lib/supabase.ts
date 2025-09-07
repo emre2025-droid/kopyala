@@ -4,14 +4,22 @@ import { Database } from './database.types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-let supabase: ReturnType<typeof createClient<Database>> | null;
+let supabase: ReturnType<typeof createClient<Database>> | null = null;
 
-if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'your_supabase_project_url_here' || supabaseAnonKey === 'your_supabase_anon_key_here') {
-  console.warn('Supabase environment variables not configured. Using fallback mode.');
-  // Create a dummy client that will fail gracefully
-  supabase = null;
+if (!supabaseUrl || !supabaseAnonKey || 
+    supabaseUrl === 'https://your-project-id.supabase.co' || 
+    supabaseAnonKey === 'your-anon-key-here' ||
+    supabaseUrl.includes('your-project-id') ||
+    supabaseAnonKey.includes('your-anon-key')) {
+  console.error('❌ Supabase not configured! Please update your .env.local file with actual credentials.');
+  console.log('📝 Get your credentials from: https://supabase.com/dashboard/project/YOUR_PROJECT/settings/api');
 } else {
-  supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+  try {
+    supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+    console.log('✅ Supabase client initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize Supabase client:', error);
+  }
 }
 
 export { supabase };
