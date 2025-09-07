@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Device, UserRole, Customer } from '../types';
 import CustomerManager from '../CustomerManager';
@@ -49,7 +50,8 @@ interface DashboardViewProps {
     userRole: UserRole;
     allDevices: Device[];
     customers: Customer[];
-    setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
+    onAddCustomer: (name: string) => Promise<boolean>;
+    assignments: Record<string, string>;
     onAssignDevice: (deviceId: string, customerId: string | null) => Promise<void>;
 }
 
@@ -59,7 +61,7 @@ const TabButton: React.FC<{isActive: boolean, onClick: ()=>void, children: React
     </button>
 )
 
-const DashboardView: React.FC<DashboardViewProps> = ({ devices, onSelectDevice, userRole, ...adminProps }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ devices, onSelectDevice, userRole, allDevices, customers, onAddCustomer, assignments, onAssignDevice }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const renderContent = () => {
@@ -94,7 +96,15 @@ const DashboardView: React.FC<DashboardViewProps> = ({ devices, onSelectDevice, 
                     <TabButton isActive={activeTab === 'customers'} onClick={() => setActiveTab('customers')}>Müşteri Yönetimi</TabButton>
                 </div>
                 <div className="flex-grow min-h-0 overflow-y-auto">
-                    {activeTab === 'overview' ? renderContent() : <CustomerManager {...adminProps} />}
+                    {activeTab === 'overview' ? renderContent() : 
+                        <CustomerManager 
+                            customers={customers}
+                            onAddCustomer={onAddCustomer}
+                            allDevices={allDevices}
+                            assignments={assignments}
+                            onAssignDevice={onAssignDevice}
+                        />
+                    }
                 </div>
             </div>
         )

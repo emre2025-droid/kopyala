@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import mqtt from 'mqtt';
-import { DatabaseService } from './src/lib/supabase';
 import { MqttMessage, ConnectionStatusEnum, Device, TelemetryPayload, StatusPayload, UserRole, Customer } from './types';
 import Header from './components/Header';
 import ConnectionStatus from './components/ConnectionStatus';
@@ -10,7 +9,9 @@ import DashboardView from './components/DashboardView';
 import DeviceDetailView from './components/DeviceDetailView';
 import LoginPage from './LoginPage';
 import CustomerSelector from './CustomerSelector';
+import { supabase } from './supabaseClient';
 
+// --- Configs ---
 const mqttConfig = {
     brokerUrl: 'wss://a1ad4768bc2847efa4eec689fee6b7bd.s1.eu.hivemq.cloud:8884/mqtt',
     options: {
@@ -55,8 +56,6 @@ const useMqtt = (onMessage: (msg: MqttMessage) => void) => {
         clientRef.current = mqtt.connect(mqttConfig.brokerUrl, mqttConfig.options);
         const client = clientRef.current;
 
-        // FIX: The `payload` from the mqtt library in a browser context is a Uint8Array, not a Node.js Buffer.
-        // The type is changed to Uint8Array and TextDecoder is used for correct string conversion.
         const handleMessage = (topic: string, payload: Uint8Array) => {
             onMessage({
                 id: `${Date.now()}-${topic}`,
@@ -97,97 +96,41 @@ const App: React.FC = () => {
     
     // --- Persistent State ---
     const [customers, setCustomers] = useState<Customer[]>([]);
+    const [deviceNames, setDeviceName] = useState<Record<string, string>>({});
+    const [assignments, setAssignments] = useState<Record<string, string>>({});
     const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
     // Effect for fetching initial data from Supabase
     useEffect(() => {
         const loadData = async () => {
-            try {
-                console.log('📊 Loading application data...');
-                
-                // Load customers from Supabase
-                const customersData = await DatabaseService.getCustomers();
-                setCustomers(customersData.map(c => ({ id: c.id, name: c.name })));
+            // Fetch customers
+            const { data: customersData, error: customersError } = await supabase.from('customers').select('*');
+            if (customersError) {
+                console.error("Error fetching customers:", customersError);
+            } else {
+                setCustomers(customersData || []);
+            }
 
-                // Load devices from Supabase
-                const devicesData = await DatabaseService.getDevices();
-                const deviceMap = new Map<string, Device>();
-                
-                for (const dbDevice of devicesData) {
-                    // Her cihaz için son telemetri ve MQTT mesajlarını yükle
-                    const [telemetryData, mqttMessages] = await Promise.all([
-                        DatabaseService.getTelemetryData(dbDevice.id, 1),
-                        DatabaseService.getMqttMessages(dbDevice.id, 100)
-                    ]);
-
-                    const device: Device = {
-                        id: dbDevice.id,
-                        isOnline: dbDevice.is_online,
-                        lastSeen: new Date(dbDevice.last_seen).getTime(),
-                        latestTelemetry: telemetryData[0] ? {
-                            device_id: telemetryData[0].device_id,
-                            tds: telemetryData[0].tds || 0,
-                            temp: telemetryData[0].temp || 0,
-                            flow_clean: telemetryData[0].flow_clean || 0,
-                            flow_waste: telemetryData[0].flow_waste || 0,
-                            total_clean_litres: telemetryData[0].total_clean_litres || 0,
-                            total_waste_litres: telemetryData[0].total_waste_litres || 0,
-                            fw: telemetryData[0].fw || ''
-                        } : {},
-                        statusInfo: {},
-                        messageHistory: mqttMessages.map(msg => ({
-                            id: msg.id,
-                            topic: msg.topic,
-                            payload: msg.payload,
-                            timestamp: new Date(msg.timestamp).toLocaleTimeString()
-                        })),
-                        displayName: dbDevice.display_name || undefined,
-                        customerId: dbDevice.customer_id || undefined
-                    };
-                    
-                    deviceMap.set(dbDevice.id, device);
-                }
-                
-                setDevices(deviceMap);
-                console.log('✅ Application data loaded successfully');
-            } catch (error) {
-                console.warn('⚠️ Failed to load data from Supabase:', error);
-                // Show error to user but don't crash
-                console.warn('📋 Please create Supabase tables manually using the SQL Editor');
+            // Fetch device configurations
+            const { data: devicesData, error: devicesError } = await supabase.from('devices').select('id, display_name, customer_id');
+            if (devicesError) {
+                console.error("Error fetching devices:", devicesError);
+            } else if (devicesData) {
+                const names: Record<string, string> = {};
+                const assns: Record<string, string> = {};
+                devicesData.forEach((device: { id: string, display_name: string | null, customer_id: string | null }) => {
+                    if (device.display_name) {
+                        names[device.id] = device.display_name;
+                    }
+                    if (device.customer_id) {
+                        assns[device.id] = device.customer_id;
+                    }
+                });
+                setDeviceName(names);
+                setAssignments(assns);
             }
         };
         loadData();
-    }, []);
-
-    // Periyodik olarak cihaz durumlarını güncelle
-    useEffect(() => {
-        const updateDeviceStatuses = async () => {
-            try {
-                const devicesData = await DatabaseService.getDevices();
-                setDevices(prevDevices => {
-                    const newDevices = new Map(prevDevices);
-                    devicesData.forEach(dbDevice => {
-                        const existingDevice = newDevices.get(dbDevice.id);
-                        if (existingDevice) {
-                            newDevices.set(dbDevice.id, {
-                                ...existingDevice,
-                                displayName: dbDevice.display_name || undefined,
-                                customerId: dbDevice.customer_id || undefined,
-                                isOnline: dbDevice.is_online,
-                                lastSeen: new Date(dbDevice.last_seen).getTime()
-                            });
-                        }
-                    });
-                    return newDevices;
-                });
-            } catch (error) {
-                console.warn('⚠️ Failed to update device statuses:', error);
-            }
-        };
-
-        // İlk yükleme sonrası periyodik güncelleme
-        const interval = setInterval(updateDeviceStatuses, 30000); // 30 saniyede bir
-        return () => clearInterval(interval);
     }, []);
 
 
@@ -197,64 +140,6 @@ const App: React.FC = () => {
             if (!data.device_id) return;
 
             const deviceId = data.device_id;
-            
-            // Veritabanına kaydet
-            const saveToDatabase = async () => {
-                try {
-                    // MQTT mesajını kaydet
-                    await DatabaseService.insertMqttMessage({
-                        device_id: deviceId,
-                        topic: msg.topic,
-                        payload: msg.payload,
-                        timestamp: new Date().toISOString(),
-                    });
-
-                    // Telemetri veya durum verisini kaydet
-                    if (msg.topic.endsWith('/tele')) {
-                        const telemetryData = data as TelemetryPayload;
-                        await DatabaseService.insertTelemetryData({
-                            device_id: deviceId,
-                            tds: telemetryData.tds,
-                            temp: telemetryData.temp,
-                            flow_clean: telemetryData.flow_clean,
-                            flow_waste: telemetryData.flow_waste,
-                            total_clean_litres: telemetryData.total_clean_litres,
-                            total_waste_litres: telemetryData.total_waste_litres,
-                            fw: telemetryData.fw,
-                            timestamp: telemetryData.ts || new Date().toISOString(),
-                        });
-                    } else if (msg.topic.endsWith('/stat')) {
-                        const statusData = data as StatusPayload;
-                        await DatabaseService.insertStatusData({
-                            device_id: deviceId,
-                            event: statusData.event,
-                            fw: statusData.fw,
-                            ip: statusData.ip,
-                            rssi: statusData.rssi,
-                            uptime_ms: statusData.uptime_ms,
-                            interval_ms: statusData.interval_ms,
-                            status: statusData.status,
-                            timestamp: statusData.ts || new Date().toISOString(),
-                        });
-                    }
-
-                    // Cihazı veritabanında güncelle/oluştur
-                    const existingDevice = devices.get(deviceId);
-                    await DatabaseService.upsertDevice({
-                        id: deviceId,
-                        display_name: existingDevice?.displayName || null,
-                        customer_id: existingDevice?.customerId || null,
-                        is_online: true,
-                        last_seen: new Date().toISOString(),
-                    });
-                } catch (error) {
-                    console.warn('⚠️ Database save error:', error);
-                }
-            };
-
-            // Asenkron olarak veritabanına kaydet
-            saveToDatabase();
-            
             setDevices(prevDevices => {
                 const newDevices = new Map(prevDevices);
                 const existingDevice = newDevices.get(deviceId);
@@ -278,7 +163,7 @@ const App: React.FC = () => {
                 return newDevices;
             });
         } catch (e) { /* Ignore non-JSON */ }
-    }, [devices]);
+    }, []);
 
     const { status, publish } = useMqtt(handleMessage);
     
@@ -300,56 +185,80 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
+    const augmentedDevices = useMemo(() => {
+        const augmented = new Map<string, Device>();
+        devices.forEach((device, id) => {
+            augmented.set(id, {
+                ...device,
+                displayName: deviceNames[id],
+                customerId: assignments[id],
+            });
+        });
+        return augmented;
+    }, [devices, deviceNames, assignments]);
+
+
     const deviceList = useMemo(() => {
-        let list = Array.from(devices.values());
+        let list = Array.from(augmentedDevices.values());
         if (userRole === 'customer' && selectedCustomerId) {
             list = list.filter((d: Device) => d.customerId === selectedCustomerId);
         }
         return list.sort((a: Device, b: Device) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
-    }, [devices, userRole, selectedCustomerId]);
+    }, [augmentedDevices, userRole, selectedCustomerId]);
 
 
     const filteredDevices = deviceList.filter(d => 
         (d.displayName || d.id).toLowerCase().includes(sidebarFilter.toLowerCase())
     );
 
-    const selectedDevice = selectedDeviceId ? devices.get(selectedDeviceId) : null;
+    const selectedDevice = selectedDeviceId ? augmentedDevices.get(selectedDeviceId) : null;
 
     const handleSendCommand = (deviceId: string, command: string) => {
         publish(`als/${deviceId}/cmd`, command);
     };
 
+    // --- Data Mutation Handlers ---
+    const handleAddCustomer = async (name: string): Promise<boolean> => {
+        const { data, error } = await supabase.from('customers').insert({ name }).select().single();
+        if (error) {
+            console.error("Failed to add customer:", error);
+            alert(`Error: ${error.message}`);
+            return false;
+        }
+        if (data) {
+            setCustomers(prev => [...prev, data]);
+        }
+        return true;
+    };
+
     const handleRenameDevice = async (deviceId: string, newName: string) => {
-        try {
-            await DatabaseService.updateDeviceName(deviceId, newName);
-            setDevices(prevDevices => {
-                const newDevices = new Map(prevDevices);
-                const device = newDevices.get(deviceId);
-                if (device) {
-                    newDevices.set(deviceId, { ...device, displayName: newName });
+        const { error } = await supabase.from('devices').upsert({ id: deviceId, display_name: newName }, { onConflict: 'id' });
+        if (error) {
+            console.error("Failed to rename device:", error);
+            alert(`Error: ${error.message}`);
+        } else {
+            setDeviceName(prev => ({ ...prev, [deviceId]: newName }));
+        }
+    };
+    
+    const handleAssignDevice = async (deviceId: string, customerId: string | null) => {
+        const { error } = await supabase.from('devices').upsert({ id: deviceId, customer_id: customerId }, { onConflict: 'id' });
+        if (error) {
+            console.error("Failed to assign device:", error);
+            alert(`Error: ${error.message}`);
+        } else {
+            setAssignments(prev => {
+                const newAssignments = { ...prev };
+                if (customerId) {
+                    newAssignments[deviceId] = customerId;
+                } else {
+                    delete newAssignments[deviceId];
                 }
-                return newDevices;
+                return newAssignments;
             });
-        } catch (error) {
-            console.error('Error renaming device:', error);
         }
     };
 
-    const handleAssignDevice = async (deviceId: string, customerId: string | null) => {
-        try {
-            await DatabaseService.updateDeviceCustomer(deviceId, customerId);
-            setDevices(prevDevices => {
-                const newDevices = new Map(prevDevices);
-                const device = newDevices.get(deviceId);
-                if (device) {
-                    newDevices.set(deviceId, { ...device, customerId: customerId || undefined });
-                }
-                return newDevices;
-            });
-        } catch (error) {
-            console.error('Error assigning device:', error);
-        }
-    };
 
     if (!isAuthenticated) {
         return <LoginPage onLogin={login} />;
@@ -395,9 +304,10 @@ const App: React.FC = () => {
                                 devices={filteredDevices} 
                                 onSelectDevice={setSelectedDeviceId}
                                 userRole={userRole}
-                                allDevices={Array.from(devices.values())}
+                                allDevices={Array.from(augmentedDevices.values())}
                                 customers={customers}
-                                setCustomers={setCustomers}
+                                onAddCustomer={handleAddCustomer}
+                                assignments={assignments}
                                 onAssignDevice={handleAssignDevice}
                              />
                         )}

@@ -1,46 +1,33 @@
+
 import React, { useState } from 'react';
-import { DatabaseService } from './src/lib/supabase';
 import { Customer, Device } from './types';
 
 interface CustomerManagerProps {
     customers: Customer[];
-    setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
+    onAddCustomer: (name: string) => Promise<boolean>;
     allDevices: Device[];
-    onAssignDevice: (deviceId: string, customerId: string | null) => Promise<void>;
+    assignments: Record<string, string>;
+    onAssignDevice: (deviceId: string, customerId: string | null) => void;
 }
 
-const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustomers, allDevices, onAssignDevice }) => {
+const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, onAddCustomer, allDevices, assignments, onAssignDevice }) => {
     const [newCustomerName, setNewCustomerName] = useState('');
+    const [isAdding, setIsAdding] = useState(false);
 
-    const handleAddCustomer = (e: React.FormEvent) => {
+    const handleAddCustomer = async (e: React.FormEvent) => {
         e.preventDefault();
-        const addCustomer = async () => {
-            if (newCustomerName.trim() && !customers.some(c => c.name === newCustomerName.trim())) {
-                try {
-                    const newCustomer = await DatabaseService.createCustomer(newCustomerName.trim());
-                    setCustomers(prev => [...prev, { id: newCustomer.id, name: newCustomer.name }]);
-                    setNewCustomerName('');
-                } catch (error) {
-                    console.error('Error creating customer:', error);
-                    // Fallback to local state
-                    const newCustomer: Customer = { id: `cust_${Date.now()}`, name: newCustomerName.trim() };
-                    setCustomers(prev => [...prev, newCustomer]);
-                    setNewCustomerName('');
-                }
+        if (newCustomerName.trim() && !customers.some(c => c.name === newCustomerName.trim())) {
+            setIsAdding(true);
+            const success = await onAddCustomer(newCustomerName.trim());
+            if (success) {
+                setNewCustomerName('');
             }
-        };
-        addCustomer();
+            setIsAdding(false);
+        }
     };
     
-    const handleDeleteCustomer = async (customerId: string) => {
-        if (window.confirm('Bu müşteriyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
-            try {
-                await DatabaseService.deleteCustomer(customerId);
-                setCustomers(prev => prev.filter(c => c.id !== customerId));
-            } catch (error) {
-                console.error('Error deleting customer:', error);
-            }
-        }
+    const handleAssignDevice = (deviceId: string, customerId: string) => {
+        onAssignDevice(deviceId, customerId || null); // Pass null if unassigning
     };
 
     const unassignedDevices = allDevices.filter(d => !d.customerId);
@@ -57,9 +44,14 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
                         onChange={(e) => setNewCustomerName(e.target.value)}
                         placeholder="Müşteri Adı (Örn: X Oteli)"
                         className="flex-grow bg-gray-900 border border-gray-600 text-gray-200 text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block w-full p-2.5"
+                        disabled={isAdding}
                     />
-                    <button type="submit" className="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-md hover:bg-cyan-500">
-                        Ekle
+                    <button 
+                        type="submit" 
+                        className="px-4 py-2 text-sm font-semibold text-white bg-cyan-600 rounded-md hover:bg-cyan-500 disabled:bg-gray-500"
+                        disabled={isAdding || !newCustomerName.trim()}
+                    >
+                        {isAdding ? 'Ekleniyor...' : 'Ekle'}
                     </button>
                 </form>
             </div>
@@ -72,28 +64,10 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
                     <div className="overflow-y-auto space-y-2">
                         {customers.map(customer => (
                             <div key={customer.id} className="bg-gray-900 p-3 rounded-md">
-                                <div className="flex justify-between items-start mb-2">
-                                    <p className="font-semibold text-gray-200">{customer.name}</p>
-                                    <button
-                                        onClick={() => handleDeleteCustomer(customer.id)}
-                                        className="text-red-400 hover:text-red-300 text-xs"
-                                        title="Müşteriyi sil"
-                                    >
-                                        Sil
-                                    </button>
-                                </div>
+                                <p className="font-semibold text-gray-200">{customer.name}</p>
                                 <ul className="text-xs text-gray-400 mt-1 pl-4 list-disc">
                                     {allDevices.filter(d => d.customerId === customer.id).map(d => (
-                                        <li key={d.id} className="font-mono flex justify-between items-center">
-                                            <span>{d.displayName || d.id}</span>
-                                            <button
-                                                onClick={() => onAssignDevice(d.id, null)}
-                                                className="text-yellow-400 hover:text-yellow-300 ml-2"
-                                                title="Cihaz atamasını kaldır"
-                                            >
-                                                Kaldır
-                                            </button>
-                                        </li>
+                                        <li key={d.id} className="font-mono">{d.displayName || d.id}</li>
                                     ))}
                                     {allDevices.filter(d => d.customerId === customer.id).length === 0 && (
                                         <li>Henüz cihaz atanmadı.</li>
@@ -113,7 +87,7 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
                                 <span className="font-mono text-sm text-gray-200 truncate">{device.displayName || device.id}</span>
                                 <select 
                                     value={''}
-                                    onChange={(e) => onAssignDevice(device.id, e.target.value || null)}
+                                    onChange={(e) => handleAssignDevice(device.id, e.target.value)}
                                     className="bg-gray-700 border-gray-600 text-gray-200 text-xs rounded p-1"
                                 >
                                     <option value="">Müşteri Seç...</option>
