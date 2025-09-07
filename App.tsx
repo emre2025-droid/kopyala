@@ -104,6 +104,7 @@ const App: React.FC = () => {
         const loadData = async () => {
             try {
                 console.log('Loading data from Supabase...');
+                // Check if tables exist by trying to fetch customers
                 const customersData = await DatabaseService.getCustomers();
                 setCustomers(customersData.map(c => ({ id: c.id, name: c.name })));
 
@@ -149,7 +150,17 @@ const App: React.FC = () => {
                 setDevices(deviceMap);
                 console.log('Data loaded successfully from Supabase');
             } catch (error) {
-                console.error('Failed to load data from Supabase:', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                if (errorMessage.includes('Could not find the table') || errorMessage.includes('schema cache')) {
+                    console.error('❌ Supabase tables do not exist!');
+                    console.log('📋 Please create the required tables in your Supabase project:');
+                    console.log('1. Go to: https://supabase.com/dashboard/project/vrconfbmqtvrldnwondk/editor');
+                    console.log('2. Click "SQL Editor" in the left menu');
+                    console.log('3. Run the SQL from create_tables.sql file');
+                    console.log('4. Refresh this page after creating tables');
+                } else {
+                    console.error('Failed to load data from Supabase:', error);
+                }
             }
         };
         loadData();
@@ -177,7 +188,10 @@ const App: React.FC = () => {
                     return newDevices;
                 });
             } catch (error) {
-                console.error('Failed to update device statuses:', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                if (!errorMessage.includes('Could not find the table')) {
+                    console.error('Failed to update device statuses:', error);
+                }
             }
         };
 
@@ -244,7 +258,10 @@ const App: React.FC = () => {
                         last_seen: new Date().toISOString(),
                     });
                 } catch (error) {
-                    console.error('Database save error:', error);
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    if (!errorMessage.includes('Could not find the table')) {
+                        console.error('Database save error:', error);
+                    }
                 }
             };
 
