@@ -131,7 +131,7 @@ const App: React.FC = () => {
                 setDeviceName(names);
                 setAssignments(assignments);
             } catch (error) {
-                console.error("Failed to fetch data from Supabase:", error);
+                console.warn("Supabase not available, using fallback storage:", error.message);
                 // Fallback to localStorage/API
                 if (API_URL) {
                     try {
@@ -143,6 +143,13 @@ const App: React.FC = () => {
                         setAssignments(data.assignments || {});
                     } catch (error) {
                         console.error("Failed to fetch data from API:", error);
+                        // Final fallback to localStorage
+                        const storedCustomers = localStorage.getItem('customers');
+                        const storedDeviceNames = localStorage.getItem('deviceDisplayNames');
+                        const storedAssignments = localStorage.getItem('deviceCustomerAssignments');
+                        if (storedCustomers) setCustomers(JSON.parse(storedCustomers));
+                        if (storedDeviceNames) setDeviceName(JSON.parse(storedDeviceNames));
+                        if (storedAssignments) setAssignments(JSON.parse(storedAssignments));
                     }
                 } else {
                     const storedCustomers = localStorage.getItem('customers');
