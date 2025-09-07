@@ -4,13 +4,17 @@ import { Database } from './database.types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+let supabase: ReturnType<typeof createClient<Database>> | null;
+
 if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'your_supabase_project_url_here' || supabaseAnonKey === 'your_supabase_anon_key_here') {
   console.warn('Supabase environment variables not configured. Using fallback mode.');
   // Create a dummy client that will fail gracefully
-  export const supabase = null;
+  supabase = null;
 } else {
-  export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+  supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
 }
+
+export { supabase };
 
 // Database service functions
 export class DatabaseService {
