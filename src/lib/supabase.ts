@@ -4,7 +4,7 @@ import { Database } from './database.types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-let supabase: ReturnType<typeof createClient<Database>> | null;
+let supabase: ReturnType<typeof createClient<Database>> | null = null;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('❌ Supabase environment variables not found!');
@@ -12,16 +12,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.log('   VITE_SUPABASE_URL=your_project_url');
   console.log('   VITE_SUPABASE_ANON_KEY=your_anon_key');
   supabase = null;
-} else if (supabaseUrl.includes('your-project-id') || 
-           supabaseAnonKey.includes('YOUR_ACTUAL_ANON_KEY_HERE') ||
-           supabaseAnonKey.includes('your-anon-key')) {
-  console.error('❌ Supabase credentials are still placeholder values!');
-  console.log('📝 Please replace placeholder values in .env.local with actual credentials from:');
-  console.log('   https://supabase.com/dashboard/project/YOUR_PROJECT/settings/api');
-  supabase = null;
+} else {
   try {
     supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
     console.log('✅ Supabase client initialized');
+    console.log('🔗 Connected to:', supabaseUrl);
   } catch (error) {
     console.error('❌ Failed to initialize Supabase client:', error);
     supabase = null;
