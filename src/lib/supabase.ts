@@ -28,10 +28,10 @@ const testSupabaseConnection = async (): Promise<boolean> => {
   if (!supabase) return false;
   
   try {
-    // Simple test query
-    const { error } = await supabase.from('customers').select('count').limit(1);
+    // Test connection without relying on specific tables
+    const { error } = await supabase.auth.getSession();
     if (error) {
-      console.log('ℹ️ Supabase tables not ready - running in local mode');
+      console.log('ℹ️ Supabase connection failed - running in local mode');
       return false;
     }
     return true;
