@@ -11,10 +11,6 @@ import DeviceDetailView from './components/DeviceDetailView';
 import LoginPage from './LoginPage';
 import CustomerSelector from './CustomerSelector';
 
-// --- Configs ---
-// FIX: Hardcoded API_URL to '/api' to align with vite.config.js proxy and resolve TypeScript errors with `import.meta.env` when Vite client types are not found.
-const API_URL = '/api';
-
 const mqttConfig = {
     brokerUrl: 'wss://a1ad4768bc2847efa4eec689fee6b7bd.s1.eu.hivemq.cloud:8884/mqtt',
     options: {
@@ -101,96 +97,94 @@ const App: React.FC = () => {
     
     // --- Persistent State ---
     const [customers, setCustomers] = useState<Customer[]>([]);
-    const [deviceNames, setDeviceName] = useState<Record<string, string>>({});
-    const [assignments, setAssignments] = useState<Record<string, string>>({});
     const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-    const isInitialLoad = useRef(true);
 
-    // Effect for fetching initial data from API or localStorage
+    // Effect for fetching initial data from Supabase
     useEffect(() => {
         const loadData = async () => {
             try {
-                // Supabase'den müşterileri yükle
+                console.log('Loading data from Supabase...');
                 const customersData = await DatabaseService.getCustomers();
                 setCustomers(customersData.map(c => ({ id: c.id, name: c.name })));
 
-                // Supabase'den cihazları yükle
+                // Supabase'den cihazları yükle ve devices state'ini güncelle
                 const devicesData = await DatabaseService.getDevices();
-                const names: Record<string, string> = {};
-                const assignments: Record<string, string> = {};
+                const deviceMap = new Map<string, Device>();
                 
-                devicesData.forEach(device => {
-                    if (device.display_name) {
-                        names[device.id] = device.display_name;
-                    }
-                    if (device.customer_id) {
-                        assignments[device.id] = device.customer_id;
-                    }
-                });
-                
-                setDeviceName(names);
-                setAssignments(assignments);
-            } catch (error) {
-                console.warn("Supabase not available, using fallback storage:", error.message);
-                // Fallback to localStorage/API
-                if (API_URL) {
-                    try {
-                        const response = await fetch(`${API_URL}/data`);
-                        if (!response.ok) throw new Error('Network response was not ok');
-                        const data = await response.json();
-                        setCustomers(data.customers || []);
-                        setDeviceName(data.deviceNames || {});
-                        setAssignments(data.assignments || {});
-                    } catch (error) {
-                        console.error("Failed to fetch data from API:", error);
-                        // Final fallback to localStorage
-                        const storedCustomers = localStorage.getItem('customers');
-                        const storedDeviceNames = localStorage.getItem('deviceDisplayNames');
-                        const storedAssignments = localStorage.getItem('deviceCustomerAssignments');
-                        if (storedCustomers) setCustomers(JSON.parse(storedCustomers));
-                        if (storedDeviceNames) setDeviceName(JSON.parse(storedDeviceNames));
-                        if (storedAssignments) setAssignments(JSON.parse(storedAssignments));
-                    }
-                } else {
-                    const storedCustomers = localStorage.getItem('customers');
-                    const storedDeviceNames = localStorage.getItem('deviceDisplayNames');
-                    const storedAssignments = localStorage.getItem('deviceCustomerAssignments');
-                    if (storedCustomers) setCustomers(JSON.parse(storedCustomers));
-                    if (storedDeviceNames) setDeviceName(JSON.parse(storedDeviceNames));
-                    if (storedAssignments) setAssignments(JSON.parse(storedAssignments));
+                for (const dbDevice of devicesData) {
+                    // Her cihaz için son telemetri ve MQTT mesajlarını yükle
+                    const [telemetryData, mqttMessages] = await Promise.all([
+                        DatabaseService.getTelemetryData(dbDevice.id, 1),
+                        DatabaseService.getMqttMessages(dbDevice.id, 100)
+                    ]);
+
+                    const device: Device = {
+                        id: dbDevice.id,
+                        isOnline: dbDevice.is_online,
+                        lastSeen: new Date(dbDevice.last_seen).getTime(),
+                        latestTelemetry: telemetryData[0] ? {
+                            device_id: telemetryData[0].device_id,
+                            tds: telemetryData[0].tds || 0,
+                            temp: telemetryData[0].temp || 0,
+                            flow_clean: telemetryData[0].flow_clean || 0,
+                            flow_waste: telemetryData[0].flow_waste || 0,
+                            total_clean_litres: telemetryData[0].total_clean_litres || 0,
+                            total_waste_litres: telemetryData[0].total_waste_litres || 0,
+                            fw: telemetryData[0].fw || ''
+                        } : {},
+                        statusInfo: {},
+                        messageHistory: mqttMessages.map(msg => ({
+                            id: msg.id,
+                            topic: msg.topic,
+                            payload: msg.payload,
+                            timestamp: new Date(msg.timestamp).toLocaleTimeString()
+                        })),
+                        displayName: dbDevice.display_name || undefined,
+                        customerId: dbDevice.customer_id || undefined
+                    };
+                    
+                    deviceMap.set(dbDevice.id, device);
                 }
+                
+                setDevices(deviceMap);
+                console.log('Data loaded successfully from Supabase');
+            } catch (error) {
+                console.error('Failed to load data from Supabase:', error);
             }
-            isInitialLoad.current = false;
         };
         loadData();
     }, []);
 
-    // Effect for persisting data to API or localStorage on change
+    // Periyodik olarak cihaz durumlarını güncelle
     useEffect(() => {
-        if (isInitialLoad.current) return;
-
-        // Supabase'e veri kaydetme artık gerçek zamanlı olarak yapılıyor
-        // Bu effect sadece fallback için korunuyor
-        const persistDataFallback = async () => {
+        const updateDeviceStatuses = async () => {
             try {
-                const dataToSave = { customers, deviceNames, assignments };
-                if (API_URL) {
-                    await fetch(`${API_URL}/data`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(dataToSave),
+                const devicesData = await DatabaseService.getDevices();
+                setDevices(prevDevices => {
+                    const newDevices = new Map(prevDevices);
+                    devicesData.forEach(dbDevice => {
+                        const existingDevice = newDevices.get(dbDevice.id);
+                        if (existingDevice) {
+                            newDevices.set(dbDevice.id, {
+                                ...existingDevice,
+                                displayName: dbDevice.display_name || undefined,
+                                customerId: dbDevice.customer_id || undefined,
+                                isOnline: dbDevice.is_online,
+                                lastSeen: new Date(dbDevice.last_seen).getTime()
+                            });
+                        }
                     });
-                } else {
-                    localStorage.setItem('customers', JSON.stringify(customers));
-                    localStorage.setItem('deviceDisplayNames', JSON.stringify(deviceNames));
-                    localStorage.setItem('deviceCustomerAssignments', JSON.stringify(assignments));
-                }
+                    return newDevices;
+                });
             } catch (error) {
-                console.error("Failed to persist data:", error);
+                console.error('Failed to update device statuses:', error);
             }
         };
-        persistDataFallback();
-    }, [customers, deviceNames, assignments]);
+
+        // İlk yükleme sonrası periyodik güncelleme
+        const interval = setInterval(updateDeviceStatuses, 30000); // 30 saniyede bir
+        return () => clearInterval(interval);
+    }, []);
 
 
     const handleMessage = useCallback((msg: MqttMessage) => {
@@ -203,15 +197,6 @@ const App: React.FC = () => {
             // Veritabanına kaydet
             const saveToDatabase = async () => {
                 try {
-                    // Cihazı veritabanında güncelle/oluştur
-                    await DatabaseService.upsertDevice({
-                        id: deviceId,
-                        display_name: deviceNames[deviceId] || null,
-                        customer_id: assignments[deviceId] || null,
-                        is_online: true,
-                        last_seen: new Date().toISOString(),
-                    });
-
                     // MQTT mesajını kaydet
                     await DatabaseService.insertMqttMessage({
                         device_id: deviceId,
@@ -248,6 +233,16 @@ const App: React.FC = () => {
                             timestamp: statusData.ts || new Date().toISOString(),
                         });
                     }
+
+                    // Cihazı veritabanında güncelle/oluştur
+                    const existingDevice = devices.get(deviceId);
+                    await DatabaseService.upsertDevice({
+                        id: deviceId,
+                        display_name: existingDevice?.displayName || null,
+                        customer_id: existingDevice?.customerId || null,
+                        is_online: true,
+                        last_seen: new Date().toISOString(),
+                    });
                 } catch (error) {
                     console.error('Database save error:', error);
                 }
@@ -301,36 +296,55 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const augmentedDevices = useMemo(() => {
-        const augmented = new Map<string, Device>();
-        devices.forEach((device, id) => {
-            augmented.set(id, {
-                ...device,
-                displayName: deviceNames[id],
-                customerId: assignments[id],
-            });
-        });
-        return augmented;
-    }, [devices, deviceNames, assignments]);
-
-
     const deviceList = useMemo(() => {
-        let list = Array.from(augmentedDevices.values());
+        let list = Array.from(devices.values());
         if (userRole === 'customer' && selectedCustomerId) {
             list = list.filter((d: Device) => d.customerId === selectedCustomerId);
         }
         return list.sort((a: Device, b: Device) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
-    }, [augmentedDevices, userRole, selectedCustomerId]);
+    }, [devices, userRole, selectedCustomerId]);
 
 
     const filteredDevices = deviceList.filter(d => 
         (d.displayName || d.id).toLowerCase().includes(sidebarFilter.toLowerCase())
     );
 
-    const selectedDevice = selectedDeviceId ? augmentedDevices.get(selectedDeviceId) : null;
+    const selectedDevice = selectedDeviceId ? devices.get(selectedDeviceId) : null;
 
     const handleSendCommand = (deviceId: string, command: string) => {
         publish(`als/${deviceId}/cmd`, command);
+    };
+
+    const handleRenameDevice = async (deviceId: string, newName: string) => {
+        try {
+            await DatabaseService.updateDeviceName(deviceId, newName);
+            setDevices(prevDevices => {
+                const newDevices = new Map(prevDevices);
+                const device = newDevices.get(deviceId);
+                if (device) {
+                    newDevices.set(deviceId, { ...device, displayName: newName });
+                }
+                return newDevices;
+            });
+        } catch (error) {
+            console.error('Error renaming device:', error);
+        }
+    };
+
+    const handleAssignDevice = async (deviceId: string, customerId: string | null) => {
+        try {
+            await DatabaseService.updateDeviceCustomer(deviceId, customerId);
+            setDevices(prevDevices => {
+                const newDevices = new Map(prevDevices);
+                const device = newDevices.get(deviceId);
+                if (device) {
+                    newDevices.set(deviceId, { ...device, customerId: customerId || undefined });
+                }
+                return newDevices;
+            });
+        } catch (error) {
+            console.error('Error assigning device:', error);
+        }
     };
 
     if (!isAuthenticated) {
@@ -369,7 +383,7 @@ const App: React.FC = () => {
                              <DeviceDetailView 
                                 device={selectedDevice} 
                                 onSendCommand={handleSendCommand}
-                                onRenameDevice={(id, name) => setDeviceName(prev => ({ ...prev, [id]: name }))}
+                                onRenameDevice={handleRenameDevice}
                                 userRole={userRole}
                              />
                         ) : (
@@ -377,11 +391,10 @@ const App: React.FC = () => {
                                 devices={filteredDevices} 
                                 onSelectDevice={setSelectedDeviceId}
                                 userRole={userRole}
-                                allDevices={Array.from(augmentedDevices.values())}
+                                allDevices={Array.from(devices.values())}
                                 customers={customers}
                                 setCustomers={setCustomers}
-                                assignments={assignments}
-                                setAssignments={setAssignments}
+                                onAssignDevice={handleAssignDevice}
                              />
                         )}
                     </div>

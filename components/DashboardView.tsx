@@ -50,8 +50,7 @@ interface DashboardViewProps {
     allDevices: Device[];
     customers: Customer[];
     setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
-    assignments: Record<string, string>;
-    setAssignments: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    onAssignDevice: (deviceId: string, customerId: string | null) => Promise<void>;
 }
 
 const TabButton: React.FC<{isActive: boolean, onClick: ()=>void, children: React.ReactNode}> = ({isActive, onClick, children}) => (

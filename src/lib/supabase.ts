@@ -151,6 +151,22 @@ export class DatabaseService {
     return data;
   }
 
+  static async deleteCustomer(customerId: string) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
+    const { error } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', customerId);
+    
+    if (error) {
+      console.error('Error deleting customer:', error);
+      throw error;
+    }
+  }
+
   // Cihaz işlemleri
   static async getDevices() {
     if (!supabase) {

@@ -6,11 +6,10 @@ interface CustomerManagerProps {
     customers: Customer[];
     setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
     allDevices: Device[];
-    assignments: Record<string, string>;
-    setAssignments: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    onAssignDevice: (deviceId: string, customerId: string | null) => Promise<void>;
 }
 
-const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustomers, allDevices, assignments, setAssignments }) => {
+const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustomers, allDevices, onAssignDevice }) => {
     const [newCustomerName, setNewCustomerName] = useState('');
 
     const handleAddCustomer = (e: React.FormEvent) => {
@@ -33,33 +32,14 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
         addCustomer();
     };
     
-    const handleAssignDevice = async (deviceId: string, customerId: string) => {
-        try {
-            // Supabase'de güncelle
-            await DatabaseService.updateDeviceCustomer(deviceId, customerId || null);
-            
-            // Local state'i güncelle
-            setAssignments(prev => {
-                const newAssignments = { ...prev };
-                if (customerId) {
-                    newAssignments[deviceId] = customerId;
-                } else {
-                    delete newAssignments[deviceId]; // Unassign
-                }
-                return newAssignments;
-            });
-        } catch (error) {
-            console.error('Error assigning device:', error);
-            // Fallback to local state only
-            setAssignments(prev => {
-                const newAssignments = { ...prev };
-                if (customerId) {
-                    newAssignments[deviceId] = customerId;
-                } else {
-                    delete newAssignments[deviceId]; // Unassign
-                }
-                return newAssignments;
-            });
+    const handleDeleteCustomer = async (customerId: string) => {
+        if (window.confirm('Bu müşteriyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
+            try {
+                await DatabaseService.deleteCustomer(customerId);
+                setCustomers(prev => prev.filter(c => c.id !== customerId));
+            } catch (error) {
+                console.error('Error deleting customer:', error);
+            }
         }
     };
 
@@ -92,10 +72,28 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
                     <div className="overflow-y-auto space-y-2">
                         {customers.map(customer => (
                             <div key={customer.id} className="bg-gray-900 p-3 rounded-md">
-                                <p className="font-semibold text-gray-200">{customer.name}</p>
+                                <div className="flex justify-between items-start mb-2">
+                                    <p className="font-semibold text-gray-200">{customer.name}</p>
+                                    <button
+                                        onClick={() => handleDeleteCustomer(customer.id)}
+                                        className="text-red-400 hover:text-red-300 text-xs"
+                                        title="Müşteriyi sil"
+                                    >
+                                        Sil
+                                    </button>
+                                </div>
                                 <ul className="text-xs text-gray-400 mt-1 pl-4 list-disc">
                                     {allDevices.filter(d => d.customerId === customer.id).map(d => (
-                                        <li key={d.id} className="font-mono">{d.displayName || d.id}</li>
+                                        <li key={d.id} className="font-mono flex justify-between items-center">
+                                            <span>{d.displayName || d.id}</span>
+                                            <button
+                                                onClick={() => onAssignDevice(d.id, null)}
+                                                className="text-yellow-400 hover:text-yellow-300 ml-2"
+                                                title="Cihaz atamasını kaldır"
+                                            >
+                                                Kaldır
+                                            </button>
+                                        </li>
                                     ))}
                                     {allDevices.filter(d => d.customerId === customer.id).length === 0 && (
                                         <li>Henüz cihaz atanmadı.</li>
@@ -115,7 +113,7 @@ const CustomerManager: React.FC<CustomerManagerProps> = ({ customers, setCustome
                                 <span className="font-mono text-sm text-gray-200 truncate">{device.displayName || device.id}</span>
                                 <select 
                                     value={''}
-                                    onChange={(e) => handleAssignDevice(device.id, e.target.value)}
+                                    onChange={(e) => onAssignDevice(device.id, e.target.value || null)}
                                     className="bg-gray-700 border-gray-600 text-gray-200 text-xs rounded p-1"
                                 >
                                     <option value="">Müşteri Seç...</option>
