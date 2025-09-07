@@ -128,17 +128,26 @@ export class DatabaseService {
       throw new Error('Supabase not configured');
     }
     
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('name');
-    
-    if (error) {
-      console.error('Error fetching customers:', error);
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .order('name');
+      
+      if (error) {
+        console.error('Error fetching customers:', error);
+        throw error;
+      }
+      
+      return data || [];
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Could not find the table')) {
+        console.warn('⚠️ Tables not found - please create Supabase tables first');
+        return [];
+      }
       throw error;
     }
-    
-    return data || [];
   }
 
   static async createCustomer(name: string) {
