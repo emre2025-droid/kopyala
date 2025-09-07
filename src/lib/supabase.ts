@@ -5,272 +5,76 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 let supabase: ReturnType<typeof createClient<Database>> | null = null;
+let isSupabaseAvailable = false;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('❌ Supabase environment variables not found!');
+  console.log('ℹ️ Supabase environment variables not found - running in local mode');
   supabase = null;
+  isSupabaseAvailable = false;
 } else {
   try {
     supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+    isSupabaseAvailable = true;
     console.log('✅ Supabase client initialized');
   } catch (error) {
     console.error('❌ Failed to initialize Supabase client:', error);
     supabase = null;
+    isSupabaseAvailable = false;
   }
 }
 
-// Otomatik veritabanı kurulumu
-const setupDatabase = async () => {
+// Test Supabase connection
+const testSupabaseConnection = async (): Promise<boolean> => {
   if (!supabase) return false;
-
+  
   try {
-    console.log('🔧 Setting up database tables...');
-
-    // Tabloları oluştur
-    const createTablesSQL = `
-      -- Customers table
-      CREATE TABLE IF NOT EXISTS customers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      -- Devices table
-      CREATE TABLE IF NOT EXISTS devices (
-        id TEXT PRIMARY KEY,
-        display_name TEXT,
-        customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-        is_online BOOLEAN DEFAULT false,
-        last_seen TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      -- Telemetry data table
-      CREATE TABLE IF NOT EXISTS telemetry_data (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
-        tds NUMERIC,
-        temp NUMERIC,
-        flow_clean NUMERIC,
-        flow_waste NUMERIC,
-        total_clean_litres NUMERIC,
-        total_waste_litres NUMERIC,
-        fw TEXT,
-        timestamp TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      -- Status data table
-      CREATE TABLE IF NOT EXISTS status_data (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
-        event TEXT,
-        fw TEXT,
-        ip TEXT,
-        rssi INTEGER,
-        uptime_ms BIGINT,
-        interval_ms INTEGER,
-        status TEXT,
-        timestamp TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      -- MQTT messages table
-      CREATE TABLE IF NOT EXISTS mqtt_messages (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
-        topic TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        timestamp TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      -- Enable RLS on all tables
-      ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE telemetry_data ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE status_data ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE mqtt_messages ENABLE ROW LEVEL SECURITY;
-
-      -- Create policies for all operations
-      DO $$ 
-      BEGIN
-        -- Customers policies
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'customers' AND policyname = 'Allow all operations') THEN
-          CREATE POLICY "Allow all operations" ON customers FOR ALL USING (true) WITH CHECK (true);
-        END IF;
-
-        -- Devices policies
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'devices' AND policyname = 'Allow all operations') THEN
-          CREATE POLICY "Allow all operations" ON devices FOR ALL USING (true) WITH CHECK (true);
-        END IF;
-
-        -- Telemetry data policies
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'telemetry_data' AND policyname = 'Allow all operations') THEN
-          CREATE POLICY "Allow all operations" ON telemetry_data FOR ALL USING (true) WITH CHECK (true);
-        END IF;
-
-        -- Status data policies
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'status_data' AND policyname = 'Allow all operations') THEN
-          CREATE POLICY "Allow all operations" ON status_data FOR ALL USING (true) WITH CHECK (true);
-        END IF;
-
-        -- MQTT messages policies
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'mqtt_messages' AND policyname = 'Allow all operations') THEN
-          CREATE POLICY "Allow all operations" ON mqtt_messages FOR ALL USING (true) WITH CHECK (true);
-        END IF;
-      END $$;
-
-      -- Create indexes for better performance
-      CREATE INDEX IF NOT EXISTS idx_devices_customer_id ON devices(customer_id);
-      CREATE INDEX IF NOT EXISTS idx_devices_is_online ON devices(is_online);
-      CREATE INDEX IF NOT EXISTS idx_telemetry_device_id ON telemetry_data(device_id);
-      CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_data(timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_status_device_id ON status_data(device_id);
-      CREATE INDEX IF NOT EXISTS idx_status_timestamp ON status_data(timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_mqtt_device_id ON mqtt_messages(device_id);
-      CREATE INDEX IF NOT EXISTS idx_mqtt_timestamp ON mqtt_messages(timestamp DESC);
-
-      -- Create trigger for updating updated_at
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-        NEW.updated_at = NOW();
-        RETURN NEW;
-      END;
-      $$ language 'plpgsql';
-
-      DROP TRIGGER IF EXISTS update_devices_updated_at ON devices;
-      CREATE TRIGGER update_devices_updated_at
-        BEFORE UPDATE ON devices
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column();
-
-      -- Insert sample customers if they don't exist
-      INSERT INTO customers (name) 
-      SELECT * FROM (VALUES 
-        ('Demo Otel'),
-        ('Test Restoran'),
-        ('Örnek Fabrika')
-      ) AS v(name)
-      WHERE NOT EXISTS (SELECT 1 FROM customers WHERE name = v.name);
-    `;
-
-    // SQL'i çalıştır
-    const { error } = await supabase.rpc('exec_sql', { sql: createTablesSQL });
-    
+    // Simple test query
+    const { error } = await supabase.from('customers').select('count').limit(1);
     if (error) {
-      // RPC yoksa direkt SQL çalıştırmayı dene
-      console.log('🔄 Trying alternative setup method...');
-      
-      // Tabloları tek tek oluştur
-      const tables = [
-        {
-          name: 'customers',
-          sql: `CREATE TABLE IF NOT EXISTS customers (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        },
-        {
-          name: 'devices', 
-          sql: `CREATE TABLE IF NOT EXISTS devices (
-            id TEXT PRIMARY KEY,
-            display_name TEXT,
-            customer_id UUID,
-            is_online BOOLEAN DEFAULT false,
-            last_seen TIMESTAMPTZ DEFAULT NOW(),
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        },
-        {
-          name: 'telemetry_data',
-          sql: `CREATE TABLE IF NOT EXISTS telemetry_data (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            device_id TEXT,
-            tds NUMERIC,
-            temp NUMERIC,
-            flow_clean NUMERIC,
-            flow_waste NUMERIC,
-            total_clean_litres NUMERIC,
-            total_waste_litres NUMERIC,
-            fw TEXT,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            created_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        },
-        {
-          name: 'status_data',
-          sql: `CREATE TABLE IF NOT EXISTS status_data (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            device_id TEXT,
-            event TEXT,
-            fw TEXT,
-            ip TEXT,
-            rssi INTEGER,
-            uptime_ms BIGINT,
-            interval_ms INTEGER,
-            status TEXT,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            created_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        },
-        {
-          name: 'mqtt_messages',
-          sql: `CREATE TABLE IF NOT EXISTS mqtt_messages (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            device_id TEXT,
-            topic TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            created_at TIMESTAMPTZ DEFAULT NOW()
-          )`
-        }
-      ];
-
-      // Her tabloyu kontrol et ve oluştur
-      for (const table of tables) {
-        try {
-          const { data } = await supabase.from(table.name).select('*').limit(1);
-          console.log(`✅ Table ${table.name} exists`);
-        } catch (tableError: any) {
-          if (tableError.message?.includes('Could not find the table')) {
-            console.log(`🔧 Creating table ${table.name}...`);
-            // Tablo yoksa oluşturmaya çalış (bu genellikle çalışmaz ama deneyebiliriz)
-            console.warn(`❌ Cannot create table ${table.name} automatically. Please create it manually.`);
-          }
-        }
-      }
-    } else {
-      console.log('✅ Database setup completed successfully!');
+      console.log('ℹ️ Supabase tables not ready - running in local mode');
+      return false;
     }
-
     return true;
   } catch (error) {
-    console.error('❌ Database setup failed:', error);
+    console.log('ℹ️ Supabase connection test failed - running in local mode');
     return false;
   }
 };
 
-// Veritabanını otomatik kur
-let setupPromise: Promise<boolean> | null = null;
-const ensureDatabaseSetup = async () => {
-  if (!setupPromise) {
-    setupPromise = setupDatabase();
+// Initialize connection test
+let connectionTestPromise: Promise<boolean> | null = null;
+const checkSupabaseAvailability = async (): Promise<boolean> => {
+  if (!connectionTestPromise) {
+    connectionTestPromise = testSupabaseConnection();
   }
-  return setupPromise;
+  return connectionTestPromise;
 };
 
-export { supabase, ensureDatabaseSetup };
+export { supabase };
 
-// Database service functions
+// Database service functions with fallback to local storage
 export class DatabaseService {
-  // Veritabanı kurulumunu kontrol et
-  static async ensureSetup() {
-    return await ensureDatabaseSetup();
+  private static async isAvailable(): Promise<boolean> {
+    if (!isSupabaseAvailable) return false;
+    return await checkSupabaseAvailability();
+  }
+
+  // Local storage fallback functions
+  private static getLocalData<T>(key: string, defaultValue: T): T {
+    try {
+      const data = localStorage.getItem(key);
+      return data ? JSON.parse(data) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  private static setLocalData<T>(key: string, data: T): void {
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+      console.warn('Failed to save to localStorage:', error);
+    }
   }
 
   // Cihaz işlemleri
@@ -281,15 +85,27 @@ export class DatabaseService {
     is_online: boolean;
     last_seen: string;
   }) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const devices = this.getLocalData('devices', {});
+      devices[deviceData.id] = deviceData;
+      this.setLocalData('devices', devices);
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('devices')
-      .upsert(deviceData, { onConflict: 'id' });
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('devices')
+        .upsert(deviceData, { onConflict: 'id' });
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase upsert failed, using local storage:', error);
+      const devices = this.getLocalData('devices', {});
+      devices[deviceData.id] = deviceData;
+      this.setLocalData('devices', devices);
+    }
   }
 
   // Telemetri verisi kaydetme
@@ -304,15 +120,34 @@ export class DatabaseService {
     fw?: string | null;
     timestamp?: string;
   }) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const telemetry = this.getLocalData('telemetry_data', []);
+      telemetry.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      // Keep only last 1000 records
+      if (telemetry.length > 1000) {
+        telemetry.splice(0, telemetry.length - 1000);
+      }
+      this.setLocalData('telemetry_data', telemetry);
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('telemetry_data')
-      .insert(data);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('telemetry_data')
+        .insert(data);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase telemetry insert failed, using local storage:', error);
+      const telemetry = this.getLocalData('telemetry_data', []);
+      telemetry.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      if (telemetry.length > 1000) {
+        telemetry.splice(0, telemetry.length - 1000);
+      }
+      this.setLocalData('telemetry_data', telemetry);
+    }
   }
 
   // Durum verisi kaydetme
@@ -327,15 +162,34 @@ export class DatabaseService {
     status?: string | null;
     timestamp?: string;
   }) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const statusData = this.getLocalData('status_data', []);
+      statusData.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      // Keep only last 1000 records
+      if (statusData.length > 1000) {
+        statusData.splice(0, statusData.length - 1000);
+      }
+      this.setLocalData('status_data', statusData);
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('status_data')
-      .insert(data);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('status_data')
+        .insert(data);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase status insert failed, using local storage:', error);
+      const statusData = this.getLocalData('status_data', []);
+      statusData.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      if (statusData.length > 1000) {
+        statusData.splice(0, statusData.length - 1000);
+      }
+      this.setLocalData('status_data', statusData);
+    }
   }
 
   // MQTT mesajı kaydetme
@@ -345,135 +199,282 @@ export class DatabaseService {
     payload: string;
     timestamp?: string;
   }) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const messages = this.getLocalData('mqtt_messages', []);
+      messages.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      // Keep only last 500 records per device
+      const deviceMessages = messages.filter(m => m.device_id === data.device_id);
+      if (deviceMessages.length > 500) {
+        const otherMessages = messages.filter(m => m.device_id !== data.device_id);
+        const recentDeviceMessages = deviceMessages.slice(-500);
+        this.setLocalData('mqtt_messages', [...otherMessages, ...recentDeviceMessages]);
+      } else {
+        this.setLocalData('mqtt_messages', messages);
+      }
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('mqtt_messages')
-      .insert(data);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('mqtt_messages')
+        .insert(data);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase message insert failed, using local storage:', error);
+      const messages = this.getLocalData('mqtt_messages', []);
+      messages.push({ ...data, id: Date.now().toString(), created_at: new Date().toISOString() });
+      const deviceMessages = messages.filter(m => m.device_id === data.device_id);
+      if (deviceMessages.length > 500) {
+        const otherMessages = messages.filter(m => m.device_id !== data.device_id);
+        const recentDeviceMessages = deviceMessages.slice(-500);
+        this.setLocalData('mqtt_messages', [...otherMessages, ...recentDeviceMessages]);
+      } else {
+        this.setLocalData('mqtt_messages', messages);
+      }
+    }
   }
 
   // Müşteri işlemleri
   static async getCustomers() {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const customers = this.getLocalData('customers', [
+        { id: 'demo-hotel', name: 'Demo Otel' },
+        { id: 'test-restaurant', name: 'Test Restoran' },
+        { id: 'sample-factory', name: 'Örnek Fabrika' }
+      ]);
+      return customers;
+    }
     
-    await this.ensureSetup();
-    
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('name');
-    
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .order('name');
+      
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('Supabase customers fetch failed, using local storage:', error);
+      return this.getLocalData('customers', [
+        { id: 'demo-hotel', name: 'Demo Otel' },
+        { id: 'test-restaurant', name: 'Test Restoran' },
+        { id: 'sample-factory', name: 'Örnek Fabrika' }
+      ]);
+    }
   }
 
   static async createCustomer(name: string) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const customers = this.getLocalData('customers', []);
+      const newCustomer = { id: `customer-${Date.now()}`, name };
+      customers.push(newCustomer);
+      this.setLocalData('customers', customers);
+      return newCustomer;
+    }
     
-    await this.ensureSetup();
-    
-    const { data, error } = await supabase
-      .from('customers')
-      .insert({ name })
-      .select()
-      .single();
-    
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .insert({ name })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.warn('Supabase customer create failed, using local storage:', error);
+      const customers = this.getLocalData('customers', []);
+      const newCustomer = { id: `customer-${Date.now()}`, name };
+      customers.push(newCustomer);
+      this.setLocalData('customers', customers);
+      return newCustomer;
+    }
   }
 
   static async deleteCustomer(customerId: string) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const customers = this.getLocalData('customers', []);
+      const filtered = customers.filter(c => c.id !== customerId);
+      this.setLocalData('customers', filtered);
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('customers')
-      .delete()
-      .eq('id', customerId);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('customers')
+        .delete()
+        .eq('id', customerId);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase customer delete failed, using local storage:', error);
+      const customers = this.getLocalData('customers', []);
+      const filtered = customers.filter(c => c.id !== customerId);
+      this.setLocalData('customers', filtered);
+    }
   }
 
   // Cihaz işlemleri
   static async getDevices() {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const devices = this.getLocalData('devices', {});
+      return Object.values(devices).map(device => ({
+        ...device,
+        customer: null // Local storage doesn't have customer join
+      }));
+    }
     
-    await this.ensureSetup();
-    
-    const { data, error } = await supabase
-      .from('devices')
-      .select(`
-        *,
-        customer:customers(*)
-      `)
-      .order('id');
-    
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase
+        .from('devices')
+        .select(`
+          *,
+          customer:customers(*)
+        `)
+        .order('id');
+      
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('Supabase devices fetch failed, using local storage:', error);
+      const devices = this.getLocalData('devices', {});
+      return Object.values(devices).map(device => ({
+        ...device,
+        customer: null
+      }));
+    }
   }
 
   static async updateDeviceCustomer(deviceId: string, customerId: string | null) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const devices = this.getLocalData('devices', {});
+      if (devices[deviceId]) {
+        devices[deviceId].customer_id = customerId;
+        this.setLocalData('devices', devices);
+      }
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('devices')
-      .update({ customer_id: customerId })
-      .eq('id', deviceId);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('devices')
+        .update({ customer_id: customerId })
+        .eq('id', deviceId);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase device customer update failed, using local storage:', error);
+      const devices = this.getLocalData('devices', {});
+      if (devices[deviceId]) {
+        devices[deviceId].customer_id = customerId;
+        this.setLocalData('devices', devices);
+      }
+    }
   }
 
   static async updateDeviceName(deviceId: string, displayName: string) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const devices = this.getLocalData('devices', {});
+      if (devices[deviceId]) {
+        devices[deviceId].display_name = displayName;
+        this.setLocalData('devices', devices);
+      }
+      return;
+    }
     
-    await this.ensureSetup();
-    
-    const { error } = await supabase
-      .from('devices')
-      .update({ display_name: displayName })
-      .eq('id', deviceId);
-    
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('devices')
+        .update({ display_name: displayName })
+        .eq('id', deviceId);
+      
+      if (error) throw error;
+    } catch (error) {
+      console.warn('Supabase device name update failed, using local storage:', error);
+      const devices = this.getLocalData('devices', {});
+      if (devices[deviceId]) {
+        devices[deviceId].display_name = displayName;
+        this.setLocalData('devices', devices);
+      }
+    }
   }
 
   // Telemetri verilerini getirme
   static async getTelemetryData(deviceId: string, limit = 100) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const telemetry = this.getLocalData('telemetry_data', []);
+      return telemetry
+        .filter(t => t.device_id === deviceId)
+        .sort((a, b) => new Date(b.timestamp || b.created_at).getTime() - new Date(a.timestamp || a.created_at).getTime())
+        .slice(0, limit);
+    }
     
-    await this.ensureSetup();
-    
-    const { data, error } = await supabase
-      .from('telemetry_data')
-      .select('*')
-      .eq('device_id', deviceId)
-      .order('timestamp', { ascending: false })
-      .limit(limit);
-    
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase
+        .from('telemetry_data')
+        .select('*')
+        .eq('device_id', deviceId)
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+      
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('Supabase telemetry fetch failed, using local storage:', error);
+      const telemetry = this.getLocalData('telemetry_data', []);
+      return telemetry
+        .filter(t => t.device_id === deviceId)
+        .sort((a, b) => new Date(b.timestamp || b.created_at).getTime() - new Date(a.timestamp || a.created_at).getTime())
+        .slice(0, limit);
+    }
   }
 
   // MQTT mesajlarını getirme
   static async getMqttMessages(deviceId: string, limit = 500) {
-    if (!supabase) throw new Error('Supabase not configured');
+    const available = await this.isAvailable();
+    if (!available || !supabase) {
+      // Local storage fallback
+      const messages = this.getLocalData('mqtt_messages', []);
+      return messages
+        .filter(m => m.device_id === deviceId)
+        .sort((a, b) => new Date(b.timestamp || b.created_at).getTime() - new Date(a.timestamp || a.created_at).getTime())
+        .slice(0, limit);
+    }
     
-    await this.ensureSetup();
-    
-    const { data, error } = await supabase
-      .from('mqtt_messages')
-      .select('*')
-      .eq('device_id', deviceId)
-      .order('timestamp', { ascending: false })
-      .limit(limit);
-    
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase
+        .from('mqtt_messages')
+        .select('*')
+        .eq('device_id', deviceId)
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+      
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('Supabase messages fetch failed, using local storage:', error);
+      const messages = this.getLocalData('mqtt_messages', []);
+      return messages
+        .filter(m => m.device_id === deviceId)
+        .sort((a, b) => new Date(b.timestamp || b.created_at).getTime() - new Date(a.timestamp || a.created_at).getTime())
+        .slice(0, limit);
+    }
   }
 }

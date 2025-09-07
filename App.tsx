@@ -103,10 +103,7 @@ const App: React.FC = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                console.log('Loading data from Supabase...');
-                
-                // Önce veritabanı kurulumunu kontrol et
-                await DatabaseService.ensureSetup();
+                console.log('📊 Loading application data...');
                 
                 // Check if tables exist by trying to fetch customers
                 const customersData = await DatabaseService.getCustomers();
@@ -152,11 +149,15 @@ const App: React.FC = () => {
                 }
                 
                 setDevices(deviceMap);
-                console.log('Data loaded successfully from Supabase');
+                console.log('✅ Application data loaded successfully');
             } catch (error) {
-                console.error('Failed to load data from Supabase:', error);
-                console.log('📋 Please create the required tables manually in Supabase SQL Editor');
-                console.log('🔗 Go to: https://supabase.com/dashboard/project/vrconfbmqtvrldnwondk/editor');
+                console.warn('⚠️ Database connection failed, running in local mode:', error);
+                // Set default customers for local mode
+                setCustomers([
+                    { id: 'demo-hotel', name: 'Demo Otel' },
+                    { id: 'test-restaurant', name: 'Test Restoran' },
+                    { id: 'sample-factory', name: 'Örnek Fabrika' }
+                ]);
             }
         };
         loadData();
@@ -166,7 +167,6 @@ const App: React.FC = () => {
     useEffect(() => {
         const updateDeviceStatuses = async () => {
             try {
-                await DatabaseService.ensureSetup();
                 const devicesData = await DatabaseService.getDevices();
                 setDevices(prevDevices => {
                     const newDevices = new Map(prevDevices);
@@ -185,7 +185,7 @@ const App: React.FC = () => {
                     return newDevices;
                 });
             } catch (error) {
-                console.error('Failed to update device statuses:', error);
+                console.warn('⚠️ Device status update failed, using local data:', error);
             }
         };
 
@@ -205,8 +205,6 @@ const App: React.FC = () => {
             // Veritabanına kaydet
             const saveToDatabase = async () => {
                 try {
-                    await DatabaseService.ensureSetup();
-                    
                     // MQTT mesajını kaydet
                     await DatabaseService.insertMqttMessage({
                         device_id: deviceId,
@@ -254,7 +252,7 @@ const App: React.FC = () => {
                         last_seen: new Date().toISOString(),
                     });
                 } catch (error) {
-                    console.error('Database save error:', error);
+                    console.warn('⚠️ Database save failed, data saved locally:', error);
                 }
             };
 
