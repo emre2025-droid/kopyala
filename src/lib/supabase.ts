@@ -4,11 +4,13 @@ import { Database } from './database.types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
+if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'your_supabase_project_url_here' || supabaseAnonKey === 'your_supabase_anon_key_here') {
+  console.warn('Supabase environment variables not configured. Using fallback mode.');
+  // Create a dummy client that will fail gracefully
+  export const supabase = null;
+} else {
+  export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
 }
-
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
 
 // Database service functions
 export class DatabaseService {
@@ -20,6 +22,10 @@ export class DatabaseService {
     is_online: boolean;
     last_seen: string;
   }) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('devices')
       .upsert(deviceData, { onConflict: 'id' });
@@ -42,6 +48,10 @@ export class DatabaseService {
     fw?: string;
     timestamp?: string;
   }) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('telemetry_data')
       .insert(data);
@@ -64,6 +74,10 @@ export class DatabaseService {
     status?: string;
     timestamp?: string;
   }) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('status_data')
       .insert(data);
@@ -81,6 +95,10 @@ export class DatabaseService {
     payload: string;
     timestamp?: string;
   }) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('mqtt_messages')
       .insert(data);
@@ -93,6 +111,10 @@ export class DatabaseService {
 
   // Müşteri işlemleri
   static async getCustomers() {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { data, error } = await supabase
       .from('customers')
       .select('*')
@@ -107,6 +129,10 @@ export class DatabaseService {
   }
 
   static async createCustomer(name: string) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { data, error } = await supabase
       .from('customers')
       .insert({ name })
@@ -123,6 +149,10 @@ export class DatabaseService {
 
   // Cihaz işlemleri
   static async getDevices() {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { data, error } = await supabase
       .from('devices')
       .select(`
@@ -140,6 +170,10 @@ export class DatabaseService {
   }
 
   static async updateDeviceCustomer(deviceId: string, customerId: string | null) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('devices')
       .update({ customer_id: customerId })
@@ -152,6 +186,10 @@ export class DatabaseService {
   }
 
   static async updateDeviceName(deviceId: string, displayName: string) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { error } = await supabase
       .from('devices')
       .update({ display_name: displayName })
@@ -165,6 +203,10 @@ export class DatabaseService {
 
   // Telemetri verilerini getirme
   static async getTelemetryData(deviceId: string, limit = 100) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { data, error } = await supabase
       .from('telemetry_data')
       .select('*')
@@ -182,6 +224,10 @@ export class DatabaseService {
 
   // MQTT mesajlarını getirme
   static async getMqttMessages(deviceId: string, limit = 500) {
+    if (!supabase) {
+      throw new Error('Supabase not configured');
+    }
+    
     const { data, error } = await supabase
       .from('mqtt_messages')
       .select('*')
