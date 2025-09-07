@@ -105,11 +105,11 @@ const App: React.FC = () => {
             try {
                 console.log('📊 Loading application data...');
                 
-                // Check if tables exist by trying to fetch customers
+                // Load customers from Supabase
                 const customersData = await DatabaseService.getCustomers();
                 setCustomers(customersData.map(c => ({ id: c.id, name: c.name })));
 
-                // Supabase'den cihazları yükle ve devices state'ini güncelle
+                // Load devices from Supabase
                 const devicesData = await DatabaseService.getDevices();
                 const deviceMap = new Map<string, Device>();
                 
@@ -151,13 +151,9 @@ const App: React.FC = () => {
                 setDevices(deviceMap);
                 console.log('✅ Application data loaded successfully');
             } catch (error) {
-                console.warn('⚠️ Database connection failed, running in local mode:', error);
-                // Set default customers for local mode
-                setCustomers([
-                    { id: 'demo-hotel', name: 'Demo Otel' },
-                    { id: 'test-restaurant', name: 'Test Restoran' },
-                    { id: 'sample-factory', name: 'Örnek Fabrika' }
-                ]);
+                console.error('❌ Failed to load data from Supabase:', error);
+                // Show error to user but don't crash
+                alert('Veritabanı bağlantısı başarısız. Lütfen sayfayı yenileyin.');
             }
         };
         loadData();
@@ -185,7 +181,7 @@ const App: React.FC = () => {
                     return newDevices;
                 });
             } catch (error) {
-                console.warn('⚠️ Device status update failed, using local data:', error);
+                console.error('❌ Failed to update device statuses:', error);
             }
         };
 
@@ -252,7 +248,7 @@ const App: React.FC = () => {
                         last_seen: new Date().toISOString(),
                     });
                 } catch (error) {
-                    console.warn('⚠️ Database save failed, data saved locally:', error);
+                    console.error('❌ Database save error:', error);
                 }
             };
 
@@ -282,7 +278,7 @@ const App: React.FC = () => {
                 return newDevices;
             });
         } catch (e) { /* Ignore non-JSON */ }
-    }, []);
+    }, [devices]);
 
     const { status, publish } = useMqtt(handleMessage);
     
