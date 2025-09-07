@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DatabaseService } from '../lib/supabase';
+import { DatabaseService } from '../src/lib/supabase';
 import { Device, UserRole } from '../types';
 import MessageList from './MessageList';
 import CommandButton from './CommandButton';

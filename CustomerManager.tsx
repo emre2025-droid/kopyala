@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { DatabaseService } from './lib/supabase';
+import { DatabaseService } from './src/lib/supabase';
 import { Customer, Device } from './types';
 
 interface CustomerManagerProps {

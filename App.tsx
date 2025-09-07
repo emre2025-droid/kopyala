@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import mqtt from 'mqtt';
-import { DatabaseService } from './lib/supabase';
+import { DatabaseService } from './src/lib/supabase';
 import { MqttMessage, ConnectionStatusEnum, Device, TelemetryPayload, StatusPayload, UserRole, Customer } from './types';
 import Header from './components/Header';
 import ConnectionStatus from './components/ConnectionStatus';
