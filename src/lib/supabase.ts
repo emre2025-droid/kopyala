@@ -15,126 +15,21 @@ const setupDatabase = async (): Promise<boolean> => {
   try {
     console.log('🔧 Setting up Supabase database...');
     
-    // Create all tables with a single SQL command
-    const { error } = await supabase.rpc('exec_sql', {
-      sql: `
-        -- Create customers table
-        CREATE TABLE IF NOT EXISTS customers (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          name TEXT NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
+    // Test if tables exist by trying to query them
+    const { error: testError } = await supabase
+      .from('customers')
+      .select('count', { count: 'exact', head: true })
+      .limit(1);
 
-        -- Create devices table
-        CREATE TABLE IF NOT EXISTS devices (
-          id TEXT PRIMARY KEY,
-          display_name TEXT,
-          customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-          is_online BOOLEAN DEFAULT false,
-          last_seen TIMESTAMPTZ DEFAULT NOW(),
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
+    if (testError && testError.code === 'PGRST116') {
+      // Tables don't exist, show instructions to user
+      console.warn('⚠️ Supabase tables not found. Please create them manually.');
+      console.warn('📋 Go to your Supabase SQL Editor and run the SQL from create_tables.sql');
+      return false;
+    }
 
-        -- Create telemetry_data table
-        CREATE TABLE IF NOT EXISTS telemetry_data (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-          tds NUMERIC,
-          temp NUMERIC,
-          flow_clean NUMERIC,
-          flow_waste NUMERIC,
-          total_clean_litres NUMERIC,
-          total_waste_litres NUMERIC,
-          fw TEXT,
-          timestamp TIMESTAMPTZ DEFAULT NOW(),
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- Create status_data table
-        CREATE TABLE IF NOT EXISTS status_data (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-          event TEXT,
-          fw TEXT,
-          ip TEXT,
-          rssi INTEGER,
-          uptime_ms BIGINT,
-          interval_ms INTEGER,
-          status TEXT,
-          timestamp TIMESTAMPTZ DEFAULT NOW(),
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- Create mqtt_messages table
-        CREATE TABLE IF NOT EXISTS mqtt_messages (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-          topic TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          timestamp TIMESTAMPTZ DEFAULT NOW(),
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        -- Create indexes for better performance
-        CREATE INDEX IF NOT EXISTS idx_devices_customer_id ON devices(customer_id);
-        CREATE INDEX IF NOT EXISTS idx_devices_is_online ON devices(is_online);
-        CREATE INDEX IF NOT EXISTS idx_telemetry_device_id ON telemetry_data(device_id);
-        CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_data(timestamp DESC);
-        CREATE INDEX IF NOT EXISTS idx_status_device_id ON status_data(device_id);
-        CREATE INDEX IF NOT EXISTS idx_status_timestamp ON status_data(timestamp DESC);
-        CREATE INDEX IF NOT EXISTS idx_mqtt_device_id ON mqtt_messages(device_id);
-        CREATE INDEX IF NOT EXISTS idx_mqtt_timestamp ON mqtt_messages(timestamp DESC);
-
-        -- Enable RLS on all tables
-        ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE telemetry_data ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE status_data ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE mqtt_messages ENABLE ROW LEVEL SECURITY;
-
-        -- Create policies to allow all operations (for now)
-        DROP POLICY IF EXISTS "Allow all operations on customers" ON customers;
-        CREATE POLICY "Allow all operations on customers" ON customers FOR ALL USING (true) WITH CHECK (true);
-
-        DROP POLICY IF EXISTS "Allow all operations on devices" ON devices;
-        CREATE POLICY "Allow all operations on devices" ON devices FOR ALL USING (true) WITH CHECK (true);
-
-        DROP POLICY IF EXISTS "Allow all operations on telemetry_data" ON telemetry_data;
-        CREATE POLICY "Allow all operations on telemetry_data" ON telemetry_data FOR ALL USING (true) WITH CHECK (true);
-
-        DROP POLICY IF EXISTS "Allow all operations on status_data" ON status_data;
-        CREATE POLICY "Allow all operations on status_data" ON status_data FOR ALL USING (true) WITH CHECK (true);
-
-        DROP POLICY IF EXISTS "Allow all operations on mqtt_messages" ON mqtt_messages;
-        CREATE POLICY "Allow all operations on mqtt_messages" ON mqtt_messages FOR ALL USING (true) WITH CHECK (true);
-
-        -- Insert sample customers if they don't exist
-        INSERT INTO customers (id, name) VALUES 
-          ('550e8400-e29b-41d4-a716-446655440001', 'Demo Otel'),
-          ('550e8400-e29b-41d4-a716-446655440002', 'Test Restoran'),
-          ('550e8400-e29b-41d4-a716-446655440003', 'Örnek Fabrika')
-        ON CONFLICT (id) DO NOTHING;
-
-        -- Create trigger for updating updated_at timestamp
-        CREATE OR REPLACE FUNCTION update_updated_at_column()
-        RETURNS TRIGGER AS $$
-        BEGIN
-          NEW.updated_at = NOW();
-          RETURN NEW;
-        END;
-        $$ language 'plpgsql';
-
-        DROP TRIGGER IF EXISTS update_devices_updated_at ON devices;
-        CREATE TRIGGER update_devices_updated_at
-          BEFORE UPDATE ON devices
-          FOR EACH ROW
-          EXECUTE FUNCTION update_updated_at_column();
-      `
-    });
-
-    if (error) {
-      console.error('❌ Database setup failed:', error);
+    if (testError) {
+      console.error('❌ Database connection error:', testError);
       return false;
     }
 
@@ -163,18 +58,28 @@ export class DatabaseService {
 
   // Customer operations
   static async getCustomers() {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) {
+      console.warn('⚠️ Database not available, returning empty customers list');
+      return [];
+    }
+    
     const { data, error } = await supabase
       .from('customers')
       .select('*')
       .order('name');
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to fetch customers:', error.message);
+      return [];
+    }
     return data || [];
   }
 
   static async createCustomer(name: string) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) throw new Error('Database not available');
+    
     const { data, error } = await supabase
       .from('customers')
       .insert({ name })
@@ -186,7 +91,9 @@ export class DatabaseService {
   }
 
   static async deleteCustomer(customerId: string) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) throw new Error('Database not available');
+    
     const { error } = await supabase
       .from('customers')
       .delete()
@@ -197,7 +104,12 @@ export class DatabaseService {
 
   // Device operations
   static async getDevices() {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) {
+      console.warn('⚠️ Database not available, returning empty devices list');
+      return [];
+    }
+    
     const { data, error } = await supabase
       .from('devices')
       .select(`
@@ -206,7 +118,10 @@ export class DatabaseService {
       `)
       .order('id');
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to fetch devices:', error.message);
+      return [];
+    }
     return data || [];
   }
 
@@ -217,16 +132,22 @@ export class DatabaseService {
     is_online: boolean;
     last_seen: string;
   }) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return;
+    
     const { error } = await supabase
       .from('devices')
       .upsert(deviceData, { onConflict: 'id' });
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to upsert device:', error.message);
+    }
   }
 
   static async updateDeviceCustomer(deviceId: string, customerId: string | null) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) throw new Error('Database not available');
+    
     const { error } = await supabase
       .from('devices')
       .update({ customer_id: customerId })
@@ -236,7 +157,9 @@ export class DatabaseService {
   }
 
   static async updateDeviceName(deviceId: string, displayName: string) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) throw new Error('Database not available');
+    
     const { error } = await supabase
       .from('devices')
       .update({ display_name: displayName })
@@ -257,16 +180,22 @@ export class DatabaseService {
     fw?: string | null;
     timestamp?: string;
   }) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return;
+    
     const { error } = await supabase
       .from('telemetry_data')
       .insert(data);
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to insert telemetry data:', error.message);
+    }
   }
 
   static async getTelemetryData(deviceId: string, limit = 100) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return [];
+    
     const { data, error } = await supabase
       .from('telemetry_data')
       .select('*')
@@ -274,7 +203,10 @@ export class DatabaseService {
       .order('timestamp', { ascending: false })
       .limit(limit);
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to fetch telemetry data:', error.message);
+      return [];
+    }
     return data || [];
   }
 
@@ -290,12 +222,16 @@ export class DatabaseService {
     status?: string | null;
     timestamp?: string;
   }) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return;
+    
     const { error } = await supabase
       .from('status_data')
       .insert(data);
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to insert status data:', error.message);
+    }
   }
 
   // MQTT message operations
@@ -305,16 +241,22 @@ export class DatabaseService {
     payload: string;
     timestamp?: string;
   }) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return;
+    
     const { error } = await supabase
       .from('mqtt_messages')
       .insert(data);
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to insert MQTT message:', error.message);
+    }
   }
 
   static async getMqttMessages(deviceId: string, limit = 500) {
-    await this.ensureSetup();
+    const isSetup = await this.ensureSetup();
+    if (!isSetup) return [];
+    
     const { data, error } = await supabase
       .from('mqtt_messages')
       .select('*')
@@ -322,7 +264,10 @@ export class DatabaseService {
       .order('timestamp', { ascending: false })
       .limit(limit);
     
-    if (error) throw error;
+    if (error) {
+      console.warn('⚠️ Failed to fetch MQTT messages:', error.message);
+      return [];
+    }
     return data || [];
   }
 }

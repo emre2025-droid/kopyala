@@ -151,9 +151,9 @@ const App: React.FC = () => {
                 setDevices(deviceMap);
                 console.log('✅ Application data loaded successfully');
             } catch (error) {
-                console.error('❌ Failed to load data from Supabase:', error);
+                console.warn('⚠️ Failed to load data from Supabase:', error);
                 // Show error to user but don't crash
-                alert('Veritabanı bağlantısı başarısız. Lütfen sayfayı yenileyin.');
+                console.warn('📋 Please create Supabase tables manually using the SQL Editor');
             }
         };
         loadData();
@@ -181,7 +181,7 @@ const App: React.FC = () => {
                     return newDevices;
                 });
             } catch (error) {
-                console.error('❌ Failed to update device statuses:', error);
+                console.warn('⚠️ Failed to update device statuses:', error);
             }
         };
 
@@ -248,7 +248,7 @@ const App: React.FC = () => {
                         last_seen: new Date().toISOString(),
                     });
                 } catch (error) {
-                    console.error('❌ Database save error:', error);
+                    console.warn('⚠️ Database save error:', error);
                 }
             };
 
